@@ -6,6 +6,7 @@ import { episodeCommand, replacedWindows } from "@/lib/dub/episode-cmd";
 import { detectSongs } from "@/lib/dub/songs";
 import { formatClock } from "@/lib/dub/clock";
 import { clearMedia, getMedia, registerMediaElement, setMediaFile } from "@/lib/dub/media-bus";
+import { BROWSER_MIX_BYTES, browserCanMix, formatBytes } from "@/lib/dub/safe-zone";
 import { applyAnalysis, segmentWords, speakerIdsInOrder } from "@/lib/dub/segment";
 import { useDub } from "@/lib/dub/store";
 import { toAss, toCueSheet, toSrt } from "@/lib/dub/subtitles";
@@ -16,8 +17,11 @@ import { audioBufferToWav, downloadBlob, downloadText } from "@/lib/dub/wav";
 import { ReviewList } from "@/components/dub/review-list";
 import { useReads } from "@/components/dub/use-reads";
 
-const MAX_BYTES = 4 * 1024 * 1024;
 const EPISODE_LIMIT = 15 * 60;
+const SCENE =
+  "English scene. Keep every name in the glossary, in Persian script, and match how each person talks.";
+const ANIME_SCENE =
+  "English anime. Keep every name in the glossary, in Persian script, and match how each person talks.";
 const VOICE_CYCLE = ["ara", "rex", "luna", "orion", "leo", "sal"];
 
 export function Studio() {
@@ -30,79 +34,74 @@ export function Studio() {
   const [running, setRunning] = useState(false);
   const [dropLabel, setDropLabel] = useState<string | null>(null);
   const [command, setCommand] = useState<string | null>(null);
+  const [held, setHeld] = useState<{ name: string; size: number; duration: number | null } | null>(null);
 
   useEffect(() => {
     void useDub.persist.rehydrate();
   }, []);
 
-  async function onFile(file: File, announce = true): Promise<boolean> {
-    if (file.size > MAX_BYTES) {
-      useDub.getState().setBanner("Keep the scene under 4 MB. A short mp3 is enough.");
+  async function holdFile(file: File): Promise<{ duration: number | null } | null> {
+    setMediaFile(file, null);
+    setMediaTick((value) => value + 1);
+    setHeld({ name: file.name, size: file.size, duration: null });
+    setDropLabel("Reading duration");
+    try {
+      const { probeDuration } = await import("@/lib/dub/anime-listen");
+      const duration = await probeDuration(file);
+      if (getMedia().file !== file) {
+        useDub.getState().setBanner("upload it again.");
+        return null;
+      }
+      const shown = Number.isFinite(duration) && duration > 0 ? duration : null;
+      setHeld({ name: file.name, size: file.size, duration: shown });
+      return { duration: shown };
+    } catch {
+      if (getMedia().file !== file) {
+        useDub.getState().setBanner("upload it again.");
+        return null;
+      }
+      return { duration: null };
+    }
+  }
+
+  async function listenFile(file: File, scene: string, knownDuration: number | null): Promise<boolean> {
+    if (getMedia().file !== file) {
+      useDub.getState().setBanner("upload it again.");
       return false;
     }
     useDub.getState().setBusy("listen");
     useDub.getState().setBanner(null);
     try {
-      const body = new FormData();
-      body.append("file", file);
-      const [response, audio] = await Promise.all([
-        fetch("/api/transcribe", { method: "POST", body }),
-        decodeFile(file),
-      ]);
-      const data = (await response.json()) as {
-        ok: boolean;
-        error?: string;
-        duration?: number;
-        words?: AsrWord[];
-      };
-      if (!data.ok) {
-        useDub.getState().setBanner(data.error ?? "Could not listen to that file.");
+      const { transcribeAnime, decodeEpisode } = await import("@/lib/dub/anime-listen");
+      const heard = await transcribeAnime(file, setDropLabel, () => getMedia().file === file);
+      if (getMedia().file !== file) {
+        useDub.getState().setBanner("upload it again.");
         return false;
       }
-      let segments = segmentWords(data.words ?? []);
-      if (segments.length === 0) {
-        useDub.getState().setBanner("No speech in that file.");
-        return false;
+      const duration = Math.max(knownDuration ?? 0, heard.duration, heard.words.at(-1)?.end ?? 0);
+      setHeld({ name: file.name, size: file.size, duration: duration > 0 ? duration : null });
+      let audio: AudioBuffer | null = null;
+      if (file.size <= BROWSER_MIX_BYTES && (duration === 0 || duration <= EPISODE_LIMIT)) {
+        setDropLabel("Reading the audio");
+        audio = await decodeEpisode(file);
       }
-      if (audio) {
-        const channel = audio.getChannelData(0);
-        segments = applyAnalysis(segments, (start, end) =>
-          analyzeSpan(channel, audio.sampleRate, start, end),
-        );
-      }
-      const ids = speakerIdsInOrder(segments);
-      const speakers = ids.map((id, index) => ({
-        id,
-        name: `Speaker ${index + 1}`,
-        voiceId: VOICE_CYCLE[index % VOICE_CYCLE.length] ?? "ara",
-        note: "Say how old they feel and how they talk, so the Persian matches.",
-      }));
-      const named = (id: string) => speakers.find((speaker) => speaker.id === id)?.name ?? id;
-      const clips = buildClips(segments, named);
-      const duration = Math.max(data.duration ?? 0, audio?.duration ?? 0, segments.at(-1)?.end ?? 0);
-      const next: Project = {
-        id: crypto.randomUUID(),
-        title: file.name.replace(/\.[^.]+$/, "") || "Scene",
-        scene: "English scene. Keep every name in the glossary, in Persian script, and match how each person talks.",
-        speakers,
-        glossary: [],
-        segments: assignClips(segments, clips),
-        clips,
-        skipRanges: [],
-        mediaName: file.name,
-        duration,
-      };
-      setMediaFile(file, audio);
-      setMediaTick((value) => value + 1);
-      useDub.getState().loadProject(next);
-      if (announce) useDub.getState().setBanner("Name the speakers and add Persian spellings, then write the lines.");
-      return true;
-    } catch {
-      useDub.getState().setBanner("Could not read that file.");
+      return adopt(file, heard.words, Math.max(duration, audio?.duration ?? 0), audio, scene);
+    } catch (error) {
+      useDub.getState().setBanner(error instanceof Error ? error.message : "Could not read that file.");
       return false;
     } finally {
       useDub.getState().setBusy(null);
     }
+  }
+
+  async function onFile(file: File, announce = true): Promise<boolean> {
+    const parked = await holdFile(file);
+    if (!parked) return false;
+    const loaded = await listenFile(file, SCENE, parked.duration);
+    if (loaded && announce) {
+      useDub.getState().setBanner("Name the speakers and add Persian spellings, then write the lines.");
+    }
+    return loaded;
   }
 
   async function go(file?: File) {
@@ -136,8 +135,10 @@ export function Studio() {
     setCommand(null);
     reads.stop();
     try {
+      const parked = await holdFile(file);
+      if (!parked) return;
       setDropLabel("Listening");
-      const loaded = await loadEpisode(file);
+      const loaded = await listenFile(file, ANIME_SCENE, parked.duration);
       if (!loaded) return;
       const found = markSongs();
       const current = useDub.getState().project;
@@ -193,50 +194,7 @@ export function Studio() {
     }
   }
 
-  async function loadEpisode(file: File): Promise<boolean> {
-    if (file.size <= MAX_BYTES) {
-      const loaded = await onFile(file, false);
-      if (!loaded) return false;
-      await ensureEpisodeAudio(file);
-      return true;
-    }
-    useDub.getState().setBusy("listen");
-    useDub.getState().setBanner(null);
-    try {
-      const { transcribeAnime, decodeEpisode } = await import("@/lib/dub/anime-listen");
-      const heard = await transcribeAnime(file, setDropLabel);
-      const duration = Math.max(heard.duration, heard.words.at(-1)?.end ?? 0);
-      let audio: AudioBuffer | null = null;
-      if (duration > 0 && duration <= EPISODE_LIMIT) {
-        setDropLabel("Reading the audio");
-        audio = (await decodeEpisode(file)) ?? (await decodeFile(file));
-      }
-      return adopt(file, heard.words, Math.max(duration, audio?.duration ?? 0), audio);
-    } catch (error) {
-      useDub.getState().setBanner(error instanceof Error ? error.message : "Could not read that file.");
-      return false;
-    } finally {
-      useDub.getState().setBusy(null);
-    }
-  }
-
-  async function ensureEpisodeAudio(file: File) {
-    if (getMedia().buffer || getMedia().kind !== "video") return;
-    const project = useDub.getState().project;
-    if (!project || project.duration > EPISODE_LIMIT) return;
-    setDropLabel("Reading the audio");
-    const { decodeEpisode } = await import("@/lib/dub/anime-listen");
-    const audio = (await decodeEpisode(file)) ?? (await decodeFile(file));
-    if (!audio) return;
-    const channel = audio.getChannelData(0);
-    useDub.getState().applyPlans(
-      applyAnalysis(project.segments, (start, end) => analyzeSpan(channel, audio.sampleRate, start, end)),
-    );
-    setMediaFile(file, audio);
-    setMediaTick((value) => value + 1);
-  }
-
-  function adopt(file: File, words: AsrWord[], duration: number, audio: AudioBuffer | null): boolean {
+  function adopt(file: File, words: AsrWord[], duration: number, audio: AudioBuffer | null, scene: string): boolean {
     let segments = segmentWords(words);
     if (segments.length === 0) {
       useDub.getState().setBanner("No speech in that file.");
@@ -258,7 +216,7 @@ export function Studio() {
     const next: Project = {
       id: crypto.randomUUID(),
       title: file.name.replace(/\.[^.]+$/, "") || "Episode",
-      scene: "English anime. Keep every name in the glossary, in Persian script, and match how each person talks.",
+      scene,
       speakers,
       glossary: [],
       segments: assignClips(segments, clips),
@@ -289,6 +247,7 @@ export function Studio() {
       useDub.getState().setBanner("upload it again.");
       return;
     }
+    const heavy = source.size > BROWSER_MIX_BYTES;
     const long = current.duration > EPISODE_LIMIT;
     useDub.getState().setBusy("export");
     setDropLabel("Reading the lines");
@@ -298,18 +257,20 @@ export function Studio() {
       const commandText = episodeCommand(source.name, replacedWindows(latest.segments));
       const prior = useDub.getState().banner;
       const memory = /memory|allocation|array buffer/i.test(prior ?? "");
-      const cannotMix = long || !getMedia().buffer || !bed.audio || bed.incomplete;
+      const cannotMix = heavy || long || !getMedia().buffer || !bed.audio || bed.incomplete;
       if (cannotMix) {
         handoffFiles(latest, bed.audio);
         setCommand(commandText);
         useDub.getState().setBanner(
-          long
-            ? "This episode is over 15 minutes, so the picture was not mixed here."
-            : memory
-              ? "The browser ran out of memory, so the picture was not mixed."
-              : prior && /not read/i.test(prior)
-                ? "Some lines were not read. The files are downloading, with an ffmpeg command."
-                : "The video was not mixed. The files are downloading, with an ffmpeg command.",
+          heavy
+            ? "This file is too large to mix here. The files are downloading, with an ffmpeg command."
+            : long
+              ? "This episode is over 15 minutes, so the picture was not mixed here."
+              : memory
+                ? "The browser ran out of memory, so the picture was not mixed."
+                : prior && /not read/i.test(prior)
+                  ? "Some lines were not read. The files are downloading, with an ffmpeg command."
+                  : "The video was not mixed. The files are downloading, with an ffmpeg command.",
         );
         return;
       }
@@ -368,7 +329,18 @@ export function Studio() {
     reads.stop();
     setCommand(null);
     setDropLabel(null);
+    setHeld(null);
   }
+
+  function releasePicture(latest: Project, audio: AudioBuffer | null, reason: string) {
+    const source = getMedia().file;
+    handoffFiles(latest, audio);
+    if (source) setCommand(episodeCommand(source.name, replacedWindows(latest.segments)));
+    useDub.getState().setBanner(reason);
+  }
+
+  const parkedFile = getMedia().file;
+  const missing = Boolean((project?.mediaName || held) && !parkedFile);
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -417,6 +389,9 @@ export function Studio() {
             onRebuild={() => void rebuildEpisode()}
             dropLabel={dropLabel}
             command={command}
+            held={held}
+            missing={missing}
+            onRelease={releasePicture}
           />
         ) : (
           <Start
@@ -426,6 +401,8 @@ export function Studio() {
             onGo={(file) => void go(file)}
             onAnime={(file) => void animeDrop(file)}
             dropLabel={dropLabel}
+            held={held}
+            missing={missing}
           />
         )}
       </div>
@@ -436,6 +413,8 @@ export function Studio() {
 function Start({
   busy,
   dropLabel,
+  held,
+  missing,
   onSample,
   onFile,
   onGo,
@@ -443,6 +422,8 @@ function Start({
 }: {
   busy: boolean;
   dropLabel: string | null;
+  held: { name: string; size: number; duration: number | null } | null;
+  missing: boolean;
   onSample: () => void;
   onFile: (file: File) => void;
   onGo: (file: File) => void;
@@ -450,7 +431,7 @@ function Start({
 }) {
   return (
     <div className="mt-10">
-      <AnimeDrop busy={busy} label={dropLabel} onFile={onAnime} />
+      <SafeZone busy={busy} label={dropLabel} held={held} missing={missing} onFile={onAnime} />
       <label className="relative mt-3 block cursor-pointer rounded-xl border border-border bg-elevated p-5">
         <p className="text-xs font-medium">One pass</p>
         <p className="mt-2 text-lg font-medium">{busy ? "Working…" : "Go"}</p>
@@ -484,9 +465,9 @@ function Start({
         </button>
         <label className="rounded-xl border border-border bg-elevated p-5 text-left">
           <p className="text-xs font-medium text-faint">Your scene</p>
-          <p className="mt-2 text-lg font-medium">{busy ? "Listening…" : "Upload a short clip"}</p>
+          <p className="mt-2 text-lg font-medium">{busy ? "Listening…" : "Upload a clip"}</p>
           <p className="mt-2 text-sm text-pretty text-muted">
-            mp3, wav, m4a, or a small mp4. Under 4 MB. Speakers and timings come from the audio.
+            mp3, wav, m4a, or mp4. The file stays in this tab. Only short listen pieces are sent.
           </p>
           <input
             className="mt-4 block w-full text-sm text-muted file:mr-3 file:min-h-11 file:rounded-sm file:border-0 file:bg-accent file:px-4 file:text-sm file:font-medium file:text-accent-fg"
@@ -534,6 +515,9 @@ function Workspace({
   onRebuild,
   dropLabel,
   command,
+  held,
+  missing,
+  onRelease,
 }: {
   busy: boolean;
   busyLabel: string | null;
@@ -545,6 +529,9 @@ function Workspace({
   onRebuild: () => void;
   dropLabel: string | null;
   command: string | null;
+  held: { name: string; size: number; duration: number | null } | null;
+  missing: boolean;
+  onRelease: (project: Project, audio: AudioBuffer | null, reason: string) => void;
 }) {
   const project = useDub((state) => state.project);
   const setTitle = useDub((state) => state.setTitle);
@@ -580,9 +567,29 @@ function Workspace({
 
   async function saveMp4(soft: boolean) {
     const source = getMedia().file;
-    if (!source || getMedia().kind !== "video") return;
+    if (!source || getMedia().kind !== "video") {
+      useDub.getState().setBanner("upload the mp4 again.");
+      return;
+    }
     const current = useDub.getState().project;
     if (!current) return;
+    if (!browserCanMix(source, current.duration) || !getMedia().buffer) {
+      useDub.getState().setBusy("export");
+      try {
+        const bed = await reads.farsiBed(false);
+        const latest = useDub.getState().project ?? current;
+        onRelease(
+          latest,
+          bed.audio,
+          source.size > BROWSER_MIX_BYTES
+            ? "This file is too large to mix here. The files are downloading, with an ffmpeg command."
+            : "The video was not mixed. The files are downloading, with an ffmpeg command.",
+        );
+      } finally {
+        useDub.getState().setBusy(null);
+      }
+      return;
+    }
     setExportLabel(soft ? "Attaching subtitles" : "Writing Farsi");
     useDub.getState().setBusy("export");
     useDub.getState().setBanner(null);
@@ -611,7 +618,19 @@ function Workspace({
       });
       downloadBlob(soft ? "nava-farsi-soft.mp4" : "nava-farsi.mp4", blob);
     } catch (error) {
-      useDub.getState().setBanner(error instanceof Error ? error.message : "Could not build the translated MP4.");
+      const message = error instanceof Error ? error.message : "";
+      if (/memory|allocation|array buffer|too large/i.test(message)) {
+        const bed = await reads.farsiBed(false);
+        onRelease(
+          useDub.getState().project ?? current,
+          bed.audio,
+          /too large/i.test(message)
+            ? "This file is too large to mix here. The files are downloading, with an ffmpeg command."
+            : "The browser ran out of memory, so the picture was not mixed.",
+        );
+      } else {
+        useDub.getState().setBanner(message || "Could not build the translated MP4.");
+      }
     } finally {
       useDub.getState().setBusy(null);
       setExportLabel(null);
@@ -620,9 +639,28 @@ function Workspace({
 
   async function saveVideo() {
     const source = getMedia().file;
-    if (!source || getMedia().kind !== "video") return;
+    if (!source || getMedia().kind !== "video") {
+      useDub.getState().setBanner("upload it again.");
+      return;
+    }
     const current = useDub.getState().project;
     if (!current) return;
+    if (!browserCanMix(source, current.duration) || !getMedia().buffer) {
+      useDub.getState().setBusy("export");
+      try {
+        const bed = await reads.farsiBed(false);
+        onRelease(
+          useDub.getState().project ?? current,
+          bed.audio,
+          source.size > BROWSER_MIX_BYTES
+            ? "This file is too large to mix here. The files are downloading, with an ffmpeg command."
+            : "The video was not mixed. The files are downloading, with an ffmpeg command.",
+        );
+      } finally {
+        useDub.getState().setBusy(null);
+      }
+      return;
+    }
     const missing = current.segments.some(
       (segment) => !segment.skip && !segment.nonverbal && segment.english.trim() && !segment.farsi.trim(),
     );
@@ -654,7 +692,7 @@ function Workspace({
 
   return (
     <div className="mt-8">
-      <AnimeDrop busy={busy} label={dropLabel} onFile={onAnime} />
+      <SafeZone busy={busy} label={dropLabel} held={held} missing={missing} onFile={onAnime} />
       <p className="mt-4 text-sm tabular-nums text-muted">
         {speech.length} spoken lines · {written} written · {fitted} fitted · {reads.cached} reads
         {reads.progress ? ` · reading ${reads.progress.done}/${reads.progress.total}` : ""}
@@ -950,6 +988,49 @@ function isAnimeFile(file: File): boolean {
   return /\.(mp4|mkv|webm)$/i.test(file.name) || /video\/(mp4|webm|x-matroska)/.test(file.type);
 }
 
+function SafeZone({
+  busy,
+  label,
+  held,
+  missing,
+  onFile,
+}: {
+  busy: boolean;
+  label: string | null;
+  held: { name: string; size: number; duration: number | null } | null;
+  missing: boolean;
+  onFile: (file: File) => void;
+}) {
+  const duration =
+    held?.duration == null
+      ? label === "Reading duration"
+        ? "Reading duration"
+        : "Duration unknown"
+      : formatClock(held.duration);
+  return (
+    <section>
+      <p className="text-xs font-medium text-faint">Upload safe zone</p>
+      <p className="mt-1 text-sm text-pretty text-muted">
+        A large video stays in this tab. It is not sent whole. Listening posts short pieces only.
+      </p>
+      {missing ? <p className="mt-2 text-sm text-danger">upload it again.</p> : null}
+      {held && !missing ? (
+        <div className="mt-2">
+          <p className="max-w-full truncate text-sm" title={held.name}>
+            {held.name}
+          </p>
+          <p className="text-sm tabular-nums text-muted">
+            {formatBytes(held.size)} · {duration}
+          </p>
+        </div>
+      ) : null}
+      <div className="mt-3">
+        <AnimeDrop busy={busy} label={label} onFile={onFile} />
+      </div>
+    </section>
+  );
+}
+
 function AnimeDrop({ busy, label, onFile }: { busy: boolean; label: string | null; onFile: (file: File) => void }) {
   return (
     <label
@@ -987,15 +1068,4 @@ function slug(title: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
   return clean || "nava";
-}
-
-async function decodeFile(file: File): Promise<AudioBuffer | null> {
-  try {
-    const ctx = new AudioContext();
-    const audio = await ctx.decodeAudioData(await file.arrayBuffer());
-    await ctx.close();
-    return audio;
-  } catch {
-    return null;
-  }
 }

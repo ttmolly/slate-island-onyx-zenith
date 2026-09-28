@@ -1,17 +1,36 @@
-import { c as Input, l as AudioSampleSink, m as BlobSource, p as ALL_FORMATS } from "../_libs/mediabunny.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/anime-listen-DTHHWueL.js
-var CHUNK_SEC = 60;
-async function transcribeAnime(file, onStatus) {
-	if (file.size <= 3670016) {
-		onStatus("Listening");
-		const words = await postAudio(file);
-		return {
-			words,
-			duration: words.reduce((max, word) => Math.max(max, word.end), 0)
-		};
+import { h as BlobSource, l as Input, m as ALL_FORMATS, u as AudioSampleSink } from "../_libs/mediabunny.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/anime-listen-glmCCnap.js
+var CHUNK_RATE = 16e3;
+function maxListenSamples() {
+	return Math.floor(1572330);
+}
+function listenRouteDown(text, contentType) {
+	const type = (contentType ?? "").toLowerCase();
+	const trimmed = text.trimStart().replace(/^\uFEFF/, "");
+	if (type.includes("text/html") || trimmed.startsWith("<")) return true;
+	try {
+		JSON.parse(trimmed);
+		return false;
+	} catch {
+		return true;
 	}
+}
+async function probeDuration(file) {
 	const input = new Input({
-		source: new BlobSource(file),
+		source: new BlobSource(file, { maxCacheSize: 8388608 }),
+		formats: ALL_FORMATS
+	});
+	try {
+		const duration = await input.computeDuration();
+		return Number.isFinite(duration) ? duration : 0;
+	} finally {
+		input.dispose();
+	}
+}
+async function transcribeAnime(file, onStatus, stillThere = () => true) {
+	if (!stillThere()) throw new Error("upload it again.");
+	const input = new Input({
+		source: new BlobSource(file, { maxCacheSize: 8388608 }),
 		formats: ALL_FORMATS
 	});
 	try {
@@ -19,34 +38,46 @@ async function transcribeAnime(file, onStatus) {
 		const track = await input.getPrimaryAudioTrack();
 		if (!track) throw new Error("That file has no audio.");
 		const sink = new AudioSampleSink(track);
-		const pending = new Float32Array(16e3 * CHUNK_SEC);
+		const pending = new Float32Array(maxListenSamples());
 		let filled = 0;
 		let origin = 0;
 		let chunk = 1;
 		const words = [];
-		const total = Math.max(1, Math.ceil((Number.isFinite(duration) ? duration : CHUNK_SEC) / CHUNK_SEC));
+		const total = Math.max(1, Math.ceil((Number.isFinite(duration) ? duration : 60) / 60));
 		const flush = async () => {
 			if (filled < 1600) return;
+			if (!stillThere()) throw new Error("upload it again.");
 			onStatus(`Listening ${chunk}/${total}`);
-			const heard = await postAudio(wav16(pending.subarray(0, filled), 16e3));
+			const wav = wav16(pending.subarray(0, filled), CHUNK_RATE);
+			if (wav.size >= 3145728) throw new Error("A listen chunk was over 3 MB.");
+			const heard = await postAudio(wav);
 			for (const word of heard) words.push({
 				...word,
 				start: word.start + origin,
 				end: word.end + origin,
 				speaker: word.speaker + (chunk - 1) * 100
 			});
-			origin += filled / 16e3;
+			origin += filled / CHUNK_RATE;
 			filled = 0;
 			chunk += 1;
 		};
 		for await (const sample of sink.samples()) {
+			if (!stillThere()) throw new Error("upload it again.");
 			if (sample.timestamp + sample.duration <= 0) {
 				sample.close();
 				continue;
 			}
-			filled = pushDownmix(pending, filled, sample.toAudioBuffer());
+			const audio = sample.toAudioBuffer();
 			sample.close();
-			if (filled >= pending.length - 1600) await flush();
+			let frame = 0;
+			const frames = Math.floor(audio.length / (audio.sampleRate / CHUNK_RATE));
+			while (frame < frames) {
+				const next = downmixInto(pending, filled, audio, frame);
+				if (next.frame === frame) break;
+				filled = next.filled;
+				frame = next.frame;
+				if (filled >= pending.length) await flush();
+			}
 		}
 		await flush();
 		return {
@@ -58,8 +89,9 @@ async function transcribeAnime(file, onStatus) {
 	}
 }
 async function decodeEpisode(file) {
+	if (file.size > 536870912) return null;
 	const input = new Input({
-		source: new BlobSource(file),
+		source: new BlobSource(file, { maxCacheSize: 8388608 }),
 		formats: ALL_FORMATS
 	});
 	try {
@@ -91,12 +123,40 @@ async function decodeEpisode(file) {
 async function postAudio(file) {
 	const body = new FormData();
 	body.append("file", file, "chunk.wav");
-	const data = await (await fetch("/api/transcribe", {
+	const response = await fetch("/api/transcribe", {
 		method: "POST",
 		body
-	})).json();
+	});
+	const trimmed = (await response.text()).trimStart().replace(/^\uFEFF/, "");
+	if (listenRouteDown(trimmed, response.headers.get("content-type"))) throw new Error("The listen route is down.");
+	const data = JSON.parse(trimmed);
 	if (!data.ok) throw new Error(data.error ?? "Could not listen to that file.");
 	return data.words ?? [];
+}
+function downmixInto(target, filled, buffer, frame) {
+	const ratio = buffer.sampleRate / CHUNK_RATE;
+	const total = Math.floor(buffer.length / ratio);
+	const planes = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+	let at = filled;
+	let index = frame;
+	while (index < total && at < target.length) {
+		const pos = index * ratio;
+		const left = Math.floor(pos);
+		const frac = pos - left;
+		let sum = 0;
+		for (const plane of planes) {
+			const a = plane[left] ?? 0;
+			const b = plane[Math.min(left + 1, plane.length - 1)] ?? a;
+			sum += a + (b - a) * frac;
+		}
+		target[at] = sum / planes.length;
+		at += 1;
+		index += 1;
+	}
+	return {
+		filled: at,
+		frame: index
+	};
 }
 function writeSample(target, rate, timestamp, buffer) {
 	const ratio = buffer.sampleRate / rate;
@@ -117,27 +177,6 @@ function writeSample(target, rate, timestamp, buffer) {
 		}
 		target[at] = sum / planes.length;
 	}
-}
-function pushDownmix(target, filled, buffer) {
-	const ratio = buffer.sampleRate / 16e3;
-	const frames = Math.floor(buffer.length / ratio);
-	const room = target.length - filled;
-	const count = Math.min(frames, room);
-	const channels = buffer.numberOfChannels;
-	const planes = Array.from({ length: channels }, (_, index) => buffer.getChannelData(index));
-	for (let index = 0; index < count; index += 1) {
-		const pos = index * ratio;
-		const left = Math.floor(pos);
-		const frac = pos - left;
-		let sum = 0;
-		for (const plane of planes) {
-			const a = plane[left] ?? 0;
-			const b = plane[Math.min(left + 1, plane.length - 1)] ?? a;
-			sum += a + (b - a) * frac;
-		}
-		target[filled + index] = sum / channels;
-	}
-	return filled + count;
 }
 function wav16(samples, rate) {
 	const bytes = /* @__PURE__ */ new ArrayBuffer(44 + samples.length * 2);
@@ -167,4 +206,4 @@ function write(view, offset, text) {
 	for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index));
 }
 //#endregion
-export { decodeEpisode, transcribeAnime };
+export { decodeEpisode, probeDuration, transcribeAnime };

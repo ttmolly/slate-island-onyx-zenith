@@ -13,6 +13,10 @@ export const Route = createFileRoute("/api/transcribe")({
             { status: 503 },
           );
         }
+        const declared = Number(request.headers.get("content-length") ?? "0");
+        if (Number.isFinite(declared) && declared > MAX_BYTES) {
+          return Response.json({ ok: false, error: "That listen chunk is over 4 MB." }, { status: 413 });
+        }
         const incoming = await request.formData();
         const file = incoming.get("file");
         if (!(file instanceof File)) {
@@ -20,7 +24,7 @@ export const Route = createFileRoute("/api/transcribe")({
         }
         if (file.size > MAX_BYTES) {
           return Response.json(
-            { ok: false, error: "Keep the scene under 4 MB. A minute of mp3 is enough." },
+            { ok: false, error: "That listen chunk is over 4 MB." },
             { status: 400 },
           );
         }

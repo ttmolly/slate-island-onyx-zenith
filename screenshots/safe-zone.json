@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Nava",
+      "hasCanvas": false,
+      "bodyTextLen": 1131,
+      "bodyTextHash": "0adb5c2f362e9aa22d40d035a70339da095f13095504bff95d0ce88069a8d6bf",
+      "bodyTextPrefix": "Nava نوا English scenes, spoken Farsi. Write the line, hear it, ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/safe-zone.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Nava",
+      "hasCanvas": false,
+      "bodyTextLen": 1131,
+      "bodyTextHash": "0adb5c2f362e9aa22d40d035a70339da095f13095504bff95d0ce88069a8d6bf",
+      "bodyTextPrefix": "Nava نوا English scenes, spoken Farsi. Write the line, hear it, ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/safe-zone-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/safe-zone.json"
+}

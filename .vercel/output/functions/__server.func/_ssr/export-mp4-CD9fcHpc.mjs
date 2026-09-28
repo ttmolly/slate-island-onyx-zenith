@@ -1,7 +1,8 @@
-import { c as Input, d as Quality, f as VideoSample, m as BlobSource, n as Output, o as VideoSampleSource, p as ALL_FORMATS, r as Mp4OutputFormat, s as BufferTarget, u as VideoSampleSink } from "../_libs/mediabunny.mjs";
+import { c as StreamTarget, d as VideoSampleSink, f as Quality, h as BlobSource, l as Input, m as ALL_FORMATS, n as Output, o as VideoSampleSource, p as VideoSample, r as Mp4OutputFormat, s as BufferTarget } from "../_libs/mediabunny.mjs";
+import "./routes-k_gOWJC2.mjs";
 import { t as FFmpeg } from "../_libs/ffmpeg__ffmpeg.mjs";
 import { t as toBlobURL } from "../_libs/ffmpeg__util.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/export-mp4-WEETNkMf.js
+//#region node_modules/.nitro/vite/services/ssr/assets/export-mp4-CD9fcHpc.js
 var ffmpeg = null;
 var onProgress = () => {};
 async function encoder() {
@@ -98,12 +99,65 @@ function paintCue(ctx, text, width, height) {
 		ctx.fillText(line, width / 2, y);
 	});
 }
+async function openPictureOut(allowMemory) {
+	try {
+		const root = await navigator.storage.getDirectory();
+		const name = `nava-burn-${Date.now()}.mp4`;
+		const handle = await root.getFileHandle(name, { create: true });
+		const writable = await handle.createWritable();
+		let closed = false;
+		const close = async () => {
+			if (closed) return;
+			closed = true;
+			await writable.close();
+		};
+		return {
+			target: new StreamTarget(new WritableStream({
+				write: (chunk) => writable.write({
+					type: "write",
+					position: chunk.position,
+					data: chunk.data
+				}),
+				close,
+				abort: async () => {
+					if (closed) return;
+					closed = true;
+					await writable.abort();
+				}
+			}), {
+				chunked: true,
+				chunkSize: 2097152
+			}),
+			finish: () => handle.getFile(),
+			release: async () => {
+				try {
+					await root.removeEntry(name);
+				} catch {}
+			}
+		};
+	} catch (error) {
+		if (!allowMemory) throw new Error("This file is too large to mix in the browser.");
+		if (error instanceof Error && error.message === "This file is too large to mix in the browser.") throw error;
+		const target = new BufferTarget();
+		return {
+			target,
+			finish: async () => {
+				const buffer = target.buffer;
+				if (!buffer) throw new Error("The picture came out empty.");
+				return new Blob([buffer], { type: "video/mp4" });
+			},
+			release: async () => {}
+		};
+	}
+}
 async function burnPicture(file, cues, onStatus) {
+	if (file.size > 536870912) throw new Error("This file is too large to mix in the browser.");
 	await ensureFont();
 	const input = new Input({
-		source: new BlobSource(file),
+		source: new BlobSource(file, { maxCacheSize: 8388608 }),
 		formats: ALL_FORMATS
 	});
+	const picture = await openPictureOut(file.size <= 83886080);
 	try {
 		const track = await input.getPrimaryVideoTrack();
 		if (!track) throw new Error("That file has no picture.");
@@ -116,10 +170,9 @@ async function burnPicture(file, cues, onStatus) {
 		canvas.height = height;
 		const ctx = canvas.getContext("2d");
 		if (!ctx) throw new Error("Could not draw the picture.");
-		const target = new BufferTarget();
 		const output = new Output({
 			format: new Mp4OutputFormat(),
-			target
+			target: picture.target
 		});
 		const frames = new VideoSampleSource({
 			codec: "avc",
@@ -132,7 +185,7 @@ async function burnPicture(file, cues, onStatus) {
 		await output.start();
 		const sink = new VideoSampleSink(track);
 		let shown = -1;
-		onStatus(`Burning Farsi 0%`);
+		onStatus("Burning Farsi 0%");
 		for await (const sample of sink.samples()) {
 			sample.draw(ctx, 0, 0, width, height);
 			const cue = cues.find((item) => sample.timestamp >= item.start && sample.timestamp < item.end);
@@ -154,9 +207,15 @@ async function burnPicture(file, cues, onStatus) {
 		}
 		frames.close();
 		await output.finalize();
-		const buffer = target.buffer;
-		if (!buffer) throw new Error("The picture came out empty.");
-		return new Blob([buffer], { type: "video/mp4" });
+		const blob = await picture.finish();
+		if (blob.size > 536870912) throw new Error("This file is too large to mix in the browser.");
+		return {
+			...picture,
+			blob
+		};
+	} catch (error) {
+		await picture.release();
+		throw error;
 	} finally {
 		input.dispose();
 	}
@@ -215,13 +274,18 @@ async function muxAudio(video, wav, srt, onStatus) {
 	}
 }
 async function renderTranslatedMp4(options) {
+	if (options.video.size > 536870912) throw new Error("This file is too large to mix in the browser.");
 	if (options.soft) {
 		options.onStatus("Loading the encoder");
 		return muxAudio(options.video, options.wav, options.srt, options.onStatus);
 	}
 	const picture = await burnPicture(options.video, parseAss(options.ass), options.onStatus);
-	options.onStatus("Loading the encoder");
-	return muxAudio(picture, options.wav, null, options.onStatus);
+	try {
+		options.onStatus("Loading the encoder");
+		return await muxAudio(picture.blob, options.wav, null, options.onStatus);
+	} finally {
+		await picture.release();
+	}
 }
 //#endregion
 export { renderTranslatedMp4 };

@@ -5,9 +5,42 @@ import { n as VOICES, t as DELIVERIES } from "./types-z-OFUgnZ.mjs";
 import { t as clsx } from "../_libs/clsx.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 import { n as create, t as persist } from "../_libs/zustand.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-Betgg2fi.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-k_gOWJC2.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
+var __defProp = Object.defineProperty;
+var __exportAll = (all, no_symbols) => {
+	let target = {};
+	for (var name in all) __defProp(target, name, {
+		get: all[name],
+		enumerable: true
+	});
+	if (!no_symbols) __defProp(target, Symbol.toStringTag, { value: "Module" });
+	return target;
+};
+/** Picture mix ceiling inside the tab. This is not the listen-chunk cap. */
+var BROWSER_MIX_BYTES = 536870912;
+function browserCanMix(file, duration) {
+	return file.size <= 536870912 && duration > 0 && duration <= 900;
+}
+function formatBytes(size) {
+	if (!Number.isFinite(size) || size <= 0) return "0 B";
+	const units = [
+		"B",
+		"KB",
+		"MB",
+		"GB",
+		"TB"
+	];
+	let value = size;
+	let unit = 0;
+	while (value >= 1024 && unit < units.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	const digits = unit === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
+	return `${value.toFixed(digits)} ${units[unit]}`;
+}
 function cn(...inputs) {
 	return twMerge(clsx(inputs));
 }
@@ -2090,8 +2123,9 @@ function keepSpans(project) {
 	}
 	return merged;
 }
-var MAX_BYTES = 4194304;
 var EPISODE_LIMIT = 900;
+var SCENE = "English scene. Keep every name in the glossary, in Persian script, and match how each person talks.";
+var ANIME_SCENE = "English anime. Keep every name in the glossary, in Persian script, and match how each person talks.";
 var VOICE_CYCLE = [
 	"ara",
 	"rex",
@@ -2110,69 +2144,80 @@ function Studio() {
 	const [running, setRunning] = (0, import_react.useState)(false);
 	const [dropLabel, setDropLabel] = (0, import_react.useState)(null);
 	const [command, setCommand] = (0, import_react.useState)(null);
+	const [held, setHeld] = (0, import_react.useState)(null);
 	(0, import_react.useEffect)(() => {
 		useDub.persist.rehydrate();
 	}, []);
-	async function onFile(file, announce = true) {
-		if (file.size > MAX_BYTES) {
-			useDub.getState().setBanner("Keep the scene under 4 MB. A short mp3 is enough.");
+	async function holdFile(file) {
+		setMediaFile(file, null);
+		setMediaTick((value) => value + 1);
+		setHeld({
+			name: file.name,
+			size: file.size,
+			duration: null
+		});
+		setDropLabel("Reading duration");
+		try {
+			const { probeDuration } = await import("./anime-listen-glmCCnap.mjs");
+			const duration = await probeDuration(file);
+			if (getMedia().file !== file) {
+				useDub.getState().setBanner("upload it again.");
+				return null;
+			}
+			const shown = Number.isFinite(duration) && duration > 0 ? duration : null;
+			setHeld({
+				name: file.name,
+				size: file.size,
+				duration: shown
+			});
+			return { duration: shown };
+		} catch {
+			if (getMedia().file !== file) {
+				useDub.getState().setBanner("upload it again.");
+				return null;
+			}
+			return { duration: null };
+		}
+	}
+	async function listenFile(file, scene, knownDuration) {
+		if (getMedia().file !== file) {
+			useDub.getState().setBanner("upload it again.");
 			return false;
 		}
 		useDub.getState().setBusy("listen");
 		useDub.getState().setBanner(null);
 		try {
-			const body = new FormData();
-			body.append("file", file);
-			const [response, audio] = await Promise.all([fetch("/api/transcribe", {
-				method: "POST",
-				body
-			}), decodeFile(file)]);
-			const data = await response.json();
-			if (!data.ok) {
-				useDub.getState().setBanner(data.error ?? "Could not listen to that file.");
+			const { transcribeAnime, decodeEpisode } = await import("./anime-listen-glmCCnap.mjs");
+			const heard = await transcribeAnime(file, setDropLabel, () => getMedia().file === file);
+			if (getMedia().file !== file) {
+				useDub.getState().setBanner("upload it again.");
 				return false;
 			}
-			let segments = segmentWords(data.words ?? []);
-			if (segments.length === 0) {
-				useDub.getState().setBanner("No speech in that file.");
-				return false;
+			const duration = Math.max(knownDuration ?? 0, heard.duration, heard.words.at(-1)?.end ?? 0);
+			setHeld({
+				name: file.name,
+				size: file.size,
+				duration: duration > 0 ? duration : null
+			});
+			let audio = null;
+			if (file.size <= 536870912 && (duration === 0 || duration <= EPISODE_LIMIT)) {
+				setDropLabel("Reading the audio");
+				audio = await decodeEpisode(file);
 			}
-			if (audio) {
-				const channel = audio.getChannelData(0);
-				segments = applyAnalysis(segments, (start, end) => analyzeSpan(channel, audio.sampleRate, start, end));
-			}
-			const speakers = speakerIdsInOrder(segments).map((id, index) => ({
-				id,
-				name: `Speaker ${index + 1}`,
-				voiceId: VOICE_CYCLE[index % VOICE_CYCLE.length] ?? "ara",
-				note: "Say how old they feel and how they talk, so the Persian matches."
-			}));
-			const named = (id) => speakers.find((speaker) => speaker.id === id)?.name ?? id;
-			const clips = buildClips(segments, named);
-			const duration = Math.max(data.duration ?? 0, audio?.duration ?? 0, segments.at(-1)?.end ?? 0);
-			const next = {
-				id: crypto.randomUUID(),
-				title: file.name.replace(/\.[^.]+$/, "") || "Scene",
-				scene: "English scene. Keep every name in the glossary, in Persian script, and match how each person talks.",
-				speakers,
-				glossary: [],
-				segments: assignClips(segments, clips),
-				clips,
-				skipRanges: [],
-				mediaName: file.name,
-				duration
-			};
-			setMediaFile(file, audio);
-			setMediaTick((value) => value + 1);
-			useDub.getState().loadProject(next);
-			if (announce) useDub.getState().setBanner("Name the speakers and add Persian spellings, then write the lines.");
-			return true;
-		} catch {
-			useDub.getState().setBanner("Could not read that file.");
+			return adopt(file, heard.words, Math.max(duration, audio?.duration ?? 0), audio, scene);
+		} catch (error) {
+			useDub.getState().setBanner(error instanceof Error ? error.message : "Could not read that file.");
 			return false;
 		} finally {
 			useDub.getState().setBusy(null);
 		}
+	}
+	async function onFile(file, announce = true) {
+		const parked = await holdFile(file);
+		if (!parked) return false;
+		const loaded = await listenFile(file, SCENE, parked.duration);
+		if (loaded && announce) useDub.getState().setBanner("Name the speakers and add Persian spellings, then write the lines.");
+		return loaded;
 	}
 	async function go(file) {
 		if (running || useDub.getState().busy) return;
@@ -2202,8 +2247,10 @@ function Studio() {
 		setCommand(null);
 		reads.stop();
 		try {
+			const parked = await holdFile(file);
+			if (!parked) return;
 			setDropLabel("Listening");
-			if (!await loadEpisode(file)) return;
+			if (!await listenFile(file, ANIME_SCENE, parked.duration)) return;
 			const found = markSongs();
 			if ((useDub.getState().project?.segments.filter((segment) => !segment.skip && !segment.nonverbal && segment.english.trim()) ?? []).length > 0) {
 				setDropLabel("Writing Farsi");
@@ -2245,45 +2292,7 @@ function Studio() {
 			setDropLabel(null);
 		}
 	}
-	async function loadEpisode(file) {
-		if (file.size <= MAX_BYTES) {
-			if (!await onFile(file, false)) return false;
-			await ensureEpisodeAudio(file);
-			return true;
-		}
-		useDub.getState().setBusy("listen");
-		useDub.getState().setBanner(null);
-		try {
-			const { transcribeAnime, decodeEpisode } = await import("./anime-listen-DTHHWueL.mjs");
-			const heard = await transcribeAnime(file, setDropLabel);
-			const duration = Math.max(heard.duration, heard.words.at(-1)?.end ?? 0);
-			let audio = null;
-			if (duration > 0 && duration <= EPISODE_LIMIT) {
-				setDropLabel("Reading the audio");
-				audio = await decodeEpisode(file) ?? await decodeFile(file);
-			}
-			return adopt(file, heard.words, Math.max(duration, audio?.duration ?? 0), audio);
-		} catch (error) {
-			useDub.getState().setBanner(error instanceof Error ? error.message : "Could not read that file.");
-			return false;
-		} finally {
-			useDub.getState().setBusy(null);
-		}
-	}
-	async function ensureEpisodeAudio(file) {
-		if (getMedia().buffer || getMedia().kind !== "video") return;
-		const project = useDub.getState().project;
-		if (!project || project.duration > EPISODE_LIMIT) return;
-		setDropLabel("Reading the audio");
-		const { decodeEpisode } = await import("./anime-listen-DTHHWueL.mjs");
-		const audio = await decodeEpisode(file) ?? await decodeFile(file);
-		if (!audio) return;
-		const channel = audio.getChannelData(0);
-		useDub.getState().applyPlans(applyAnalysis(project.segments, (start, end) => analyzeSpan(channel, audio.sampleRate, start, end)));
-		setMediaFile(file, audio);
-		setMediaTick((value) => value + 1);
-	}
-	function adopt(file, words, duration, audio) {
+	function adopt(file, words, duration, audio, scene) {
 		let segments = segmentWords(words);
 		if (segments.length === 0) {
 			useDub.getState().setBanner("No speech in that file.");
@@ -2304,7 +2313,7 @@ function Studio() {
 		const next = {
 			id: crypto.randomUUID(),
 			title: file.name.replace(/\.[^.]+$/, "") || "Episode",
-			scene: "English anime. Keep every name in the glossary, in Persian script, and match how each person talks.",
+			scene,
 			speakers,
 			glossary: [],
 			segments: assignClips(segments, clips),
@@ -2333,6 +2342,7 @@ function Studio() {
 			useDub.getState().setBanner("upload it again.");
 			return;
 		}
+		const heavy = source.size > BROWSER_MIX_BYTES;
 		const long = current.duration > EPISODE_LIMIT;
 		useDub.getState().setBusy("export");
 		setDropLabel("Reading the lines");
@@ -2342,10 +2352,10 @@ function Studio() {
 			const commandText = episodeCommand(source.name, replacedWindows(latest.segments));
 			const prior = useDub.getState().banner;
 			const memory = /memory|allocation|array buffer/i.test(prior ?? "");
-			if (long || !getMedia().buffer || !bed.audio || bed.incomplete) {
+			if (heavy || long || !getMedia().buffer || !bed.audio || bed.incomplete) {
 				handoffFiles(latest, bed.audio);
 				setCommand(commandText);
-				useDub.getState().setBanner(long ? "This episode is over 15 minutes, so the picture was not mixed here." : memory ? "The browser ran out of memory, so the picture was not mixed." : prior && /not read/i.test(prior) ? "Some lines were not read. The files are downloading, with an ffmpeg command." : "The video was not mixed. The files are downloading, with an ffmpeg command.");
+				useDub.getState().setBanner(heavy ? "This file is too large to mix here. The files are downloading, with an ffmpeg command." : long ? "This episode is over 15 minutes, so the picture was not mixed here." : memory ? "The browser ran out of memory, so the picture was not mixed." : prior && /not read/i.test(prior) ? "Some lines were not read. The files are downloading, with an ffmpeg command." : "The video was not mixed. The files are downloading, with an ffmpeg command.");
 				return;
 			}
 			setDropLabel("Mixing");
@@ -2357,7 +2367,7 @@ function Studio() {
 				return;
 			}
 			try {
-				const { renderTranslatedMp4 } = await import("./export-mp4-WEETNkMf.mjs");
+				const { renderTranslatedMp4 } = await import("./export-mp4-CD9fcHpc.mjs");
 				downloadBlob("nava-anime-farsi.mp4", await renderTranslatedMp4({
 					video: source,
 					wav: audioBufferToWav(mixed.audio),
@@ -2391,7 +2401,16 @@ function Studio() {
 		reads.stop();
 		setCommand(null);
 		setDropLabel(null);
+		setHeld(null);
 	}
+	function releasePicture(latest, audio, reason) {
+		const source = getMedia().file;
+		handoffFiles(latest, audio);
+		if (source) setCommand(episodeCommand(source.name, replacedWindows(latest.segments)));
+		useDub.getState().setBanner(reason);
+	}
+	const parkedFile = getMedia().file;
+	const missing = Boolean((project?.mediaName || held) && !parkedFile);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 		className: "min-h-screen bg-bg text-fg",
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -2444,26 +2463,33 @@ function Studio() {
 					onAnime: (file) => void animeDrop(file),
 					onRebuild: () => void rebuildEpisode(),
 					dropLabel,
-					command
+					command,
+					held,
+					missing,
+					onRelease: releasePicture
 				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Start, {
 					busy: busy !== null || running,
 					onSample: () => useDub.getState().openSample(),
 					onFile: (file) => void onFile(file),
 					onGo: (file) => void go(file),
 					onAnime: (file) => void animeDrop(file),
-					dropLabel
+					dropLabel,
+					held,
+					missing
 				})
 			]
 		})
 	});
 }
-function Start({ busy, dropLabel, onSample, onFile, onGo, onAnime }) {
+function Start({ busy, dropLabel, held, missing, onSample, onFile, onGo, onAnime }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "mt-10",
 		children: [
-			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(AnimeDrop, {
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(SafeZone, {
 				busy,
 				label: dropLabel,
+				held,
+				missing,
 				onFile: onAnime
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
@@ -2524,11 +2550,11 @@ function Start({ busy, dropLabel, onSample, onFile, onGo, onAnime }) {
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "mt-2 text-lg font-medium",
-							children: busy ? "Listening…" : "Upload a short clip"
+							children: busy ? "Listening…" : "Upload a clip"
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "mt-2 text-sm text-pretty text-muted",
-							children: "mp3, wav, m4a, or a small mp4. Under 4 MB. Speakers and timings come from the audio."
+							children: "mp3, wav, m4a, or mp4. The file stays in this tab. Only short listen pieces are sent."
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 							className: "mt-4 block w-full text-sm text-muted file:mr-3 file:min-h-11 file:rounded-sm file:border-0 file:bg-accent file:px-4 file:text-sm file:font-medium file:text-accent-fg",
@@ -2593,7 +2619,7 @@ var STEPS = [
 		body: "SRT, ASS with Vazirmatn, a cue sheet, and a 48 kHz vocal bed."
 	}
 ];
-function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, onRebuild, dropLabel, command }) {
+function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, onRebuild, dropLabel, command, held, missing, onRelease }) {
 	const project = useDub((state) => state.project);
 	const setTitle = useDub((state) => state.setTitle);
 	const setScene = useDub((state) => state.setScene);
@@ -2625,9 +2651,22 @@ function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, o
 	}
 	async function saveMp4(soft) {
 		const source = getMedia().file;
-		if (!source || getMedia().kind !== "video") return;
+		if (!source || getMedia().kind !== "video") {
+			useDub.getState().setBanner("upload the mp4 again.");
+			return;
+		}
 		const current = useDub.getState().project;
 		if (!current) return;
+		if (!browserCanMix(source, current.duration) || !getMedia().buffer) {
+			useDub.getState().setBusy("export");
+			try {
+				const bed = await reads.farsiBed(false);
+				onRelease(useDub.getState().project ?? current, bed.audio, source.size > 536870912 ? "This file is too large to mix here. The files are downloading, with an ffmpeg command." : "The video was not mixed. The files are downloading, with an ffmpeg command.");
+			} finally {
+				useDub.getState().setBusy(null);
+			}
+			return;
+		}
 		setExportLabel(soft ? "Attaching subtitles" : "Writing Farsi");
 		useDub.getState().setBusy("export");
 		useDub.getState().setBanner(null);
@@ -2641,7 +2680,7 @@ function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, o
 			setExportLabel("Mixing");
 			const audio = await reads.mixPicture(false);
 			if (!audio) return;
-			const { renderTranslatedMp4 } = await import("./export-mp4-WEETNkMf.mjs");
+			const { renderTranslatedMp4 } = await import("./export-mp4-CD9fcHpc.mjs");
 			const blob = await renderTranslatedMp4({
 				video: source,
 				wav: audioBufferToWav(audio),
@@ -2652,7 +2691,11 @@ function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, o
 			});
 			downloadBlob(soft ? "nava-farsi-soft.mp4" : "nava-farsi.mp4", blob);
 		} catch (error) {
-			useDub.getState().setBanner(error instanceof Error ? error.message : "Could not build the translated MP4.");
+			const message = error instanceof Error ? error.message : "";
+			if (/memory|allocation|array buffer|too large/i.test(message)) {
+				const bed = await reads.farsiBed(false);
+				onRelease(useDub.getState().project ?? current, bed.audio, /too large/i.test(message) ? "This file is too large to mix here. The files are downloading, with an ffmpeg command." : "The browser ran out of memory, so the picture was not mixed.");
+			} else useDub.getState().setBanner(message || "Could not build the translated MP4.");
 		} finally {
 			useDub.getState().setBusy(null);
 			setExportLabel(null);
@@ -2660,9 +2703,22 @@ function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, o
 	}
 	async function saveVideo() {
 		const source = getMedia().file;
-		if (!source || getMedia().kind !== "video") return;
+		if (!source || getMedia().kind !== "video") {
+			useDub.getState().setBanner("upload it again.");
+			return;
+		}
 		const current = useDub.getState().project;
 		if (!current) return;
+		if (!browserCanMix(source, current.duration) || !getMedia().buffer) {
+			useDub.getState().setBusy("export");
+			try {
+				const bed = await reads.farsiBed(false);
+				onRelease(useDub.getState().project ?? current, bed.audio, source.size > 536870912 ? "This file is too large to mix here. The files are downloading, with an ffmpeg command." : "The video was not mixed. The files are downloading, with an ffmpeg command.");
+			} finally {
+				useDub.getState().setBusy(null);
+			}
+			return;
+		}
 		if (current.segments.some((segment) => !segment.skip && !segment.nonverbal && segment.english.trim() && !segment.farsi.trim())) {
 			if (!await dubAll()) return;
 		}
@@ -2671,7 +2727,7 @@ function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, o
 		try {
 			const audio = await reads.renderBed(false);
 			if (!audio) return;
-			const { muxDubbedVideo } = await import("./export-video-4TA2qlWV.mjs");
+			const { muxDubbedVideo } = await import("./export-video-DTtjDuQG.mjs");
 			const blob = await muxDubbedVideo(source, audio);
 			downloadBlob(`${slug(useDub.getState().project?.title ?? "nava")}-farsi.webm`, blob);
 		} catch (error) {
@@ -2688,9 +2744,11 @@ function Workspace({ busy, busyLabel, mediaTick, reads, onFile, onGo, onAnime, o
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "mt-8",
 		children: [
-			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(AnimeDrop, {
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(SafeZone, {
 				busy,
 				label: dropLabel,
+				held,
+				missing,
 				onFile: onAnime
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
@@ -3078,6 +3136,46 @@ function MediaBar({ url, kind, name, onFile, busy, onDownload }) {
 function isAnimeFile(file) {
 	return /\.(mp4|mkv|webm)$/i.test(file.name) || /video\/(mp4|webm|x-matroska)/.test(file.type);
 }
+function SafeZone({ busy, label, held, missing, onFile }) {
+	const duration = held?.duration == null ? label === "Reading duration" ? "Reading duration" : "Duration unknown" : formatClock(held.duration);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { children: [
+		/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+			className: "text-xs font-medium text-faint",
+			children: "Upload safe zone"
+		}),
+		/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+			className: "mt-1 text-sm text-pretty text-muted",
+			children: "A large video stays in this tab. It is not sent whole. Listening posts short pieces only."
+		}),
+		missing ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+			className: "mt-2 text-sm text-danger",
+			children: "upload it again."
+		}) : null,
+		held && !missing ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "mt-2",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "max-w-full truncate text-sm",
+				title: held.name,
+				children: held.name
+			}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+				className: "text-sm tabular-nums text-muted",
+				children: [
+					formatBytes(held.size),
+					" · ",
+					duration
+				]
+			})]
+		}) : null,
+		/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+			className: "mt-3",
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AnimeDrop, {
+				busy,
+				label,
+				onFile
+			})
+		})
+	] });
+}
 function AnimeDrop({ busy, label, onFile }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
 		className: "relative block cursor-pointer rounded-xl border border-border bg-accent p-5 text-accent-fg",
@@ -3113,16 +3211,7 @@ function AnimeDrop({ busy, label, onFile }) {
 function slug(title) {
 	return title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "nava";
 }
-async function decodeFile(file) {
-	try {
-		const ctx = new AudioContext();
-		const audio = await ctx.decodeAudioData(await file.arrayBuffer());
-		await ctx.close();
-		return audio;
-	} catch {
-		return null;
-	}
-}
+var routes_exports = /* @__PURE__ */ __exportAll({ component: () => SplitComponent });
 var SplitComponent = Studio;
 //#endregion
-export { SplitComponent as component };
+export { routes_exports as t };

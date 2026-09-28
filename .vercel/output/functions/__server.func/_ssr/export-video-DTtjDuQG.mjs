@@ -1,5 +1,6 @@
-import { a as AudioBufferSource, c as Input, d as Quality, i as WebMOutputFormat, m as BlobSource, n as Output, p as ALL_FORMATS, s as BufferTarget, t as Conversion } from "../_libs/mediabunny.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/export-video-4TA2qlWV.js
+import { a as AudioBufferSource, f as Quality, h as BlobSource, i as WebMOutputFormat, l as Input, m as ALL_FORMATS, n as Output, s as BufferTarget, t as Conversion } from "../_libs/mediabunny.mjs";
+import "./routes-k_gOWJC2.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/export-video-DTtjDuQG.js
 async function build(file, audio, transcode) {
 	const input = new Input({
 		source: new BlobSource(file),
@@ -39,6 +40,7 @@ async function build(file, audio, transcode) {
 	}
 }
 async function muxDubbedVideo(file, audio) {
+	if (file.size > 536870912) throw new Error("This file is too large to mix in the browser.");
 	try {
 		return await build(file, audio, false);
 	} catch {

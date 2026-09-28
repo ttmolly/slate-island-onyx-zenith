@@ -2,7 +2,7 @@ import { i as __toESM } from "../_runtime.mjs";
 import { _ as createFileRoute, b as require_jsx_runtime, d as Scripts, f as HeadContent, g as lazyRouteComponent, h as Outlet, m as createRouter, q as require_react, v as createRootRoute, y as useRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { t as TriangleAlert } from "../_libs/lucide-react.mjs";
 import { a as union, i as string, n as number, r as object, t as literal } from "../_libs/zod.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-DckRiHHt.js
+//#region node_modules/.nitro/vite/services/ssr/assets/router-D_m-5DRN.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var FALLBACK_MESSAGE = "An unexpected error occurred. Try reloading the page.";
@@ -346,7 +346,7 @@ var Route$2 = createRootRoute({
 		] })]
 	})
 });
-var $$splitComponentImporter = () => import("./routes-Betgg2fi.mjs");
+var $$splitComponentImporter = () => import("./routes-k_gOWJC2.mjs").then((n) => n.t);
 var Route$1 = createFileRoute("/")({ component: lazyRouteComponent($$splitComponentImporter, "component") });
 var MAX_BYTES = 4194304;
 var Route = createFileRoute("/api/transcribe")({ server: { handlers: { POST: async ({ request }) => {
@@ -355,6 +355,11 @@ var Route = createFileRoute("/api/transcribe")({ server: { handlers: { POST: asy
 		ok: false,
 		error: "Listening is unavailable right now."
 	}, { status: 503 });
+	const declared = Number(request.headers.get("content-length") ?? "0");
+	if (Number.isFinite(declared) && declared > MAX_BYTES) return Response.json({
+		ok: false,
+		error: "That listen chunk is over 4 MB."
+	}, { status: 413 });
 	const file = (await request.formData()).get("file");
 	if (!(file instanceof File)) return Response.json({
 		ok: false,
@@ -362,7 +367,7 @@ var Route = createFileRoute("/api/transcribe")({ server: { handlers: { POST: asy
 	}, { status: 400 });
 	if (file.size > MAX_BYTES) return Response.json({
 		ok: false,
-		error: "Keep the scene under 4 MB. A minute of mp3 is enough."
+		error: "That listen chunk is over 4 MB."
 	}, { status: 400 });
 	const forward = new FormData();
 	forward.append("file", file, file.name || "scene");

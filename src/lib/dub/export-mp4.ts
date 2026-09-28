@@ -8,10 +8,13 @@ import {
   Mp4OutputFormat,
   Output,
   Quality,
+  StreamTarget,
   VideoSample,
   VideoSampleSink,
   VideoSampleSource,
+  type Target,
 } from "mediabunny";
+import { BROWSER_MIX_BYTES } from "@/lib/dub/safe-zone";
 
 let ffmpeg: FFmpeg | null = null;
 let onProgress: (progress: number) => void = () => {};
@@ -123,9 +126,71 @@ function paintCue(ctx: CanvasRenderingContext2D, text: string, width: number, he
   });
 }
 
-async function burnPicture(file: Blob, cues: Cue[], onStatus: (label: string) => void): Promise<Blob> {
+type PictureOut = {
+  target: Target;
+  finish: () => Promise<Blob>;
+  release: () => Promise<void>;
+};
+
+async function openPictureOut(allowMemory: boolean): Promise<PictureOut> {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const name = `nava-burn-${Date.now()}.mp4`;
+    const handle = await root.getFileHandle(name, { create: true });
+    const writable = await handle.createWritable();
+    let closed = false;
+    const close = async () => {
+      if (closed) return;
+      closed = true;
+      await writable.close();
+    };
+    const target = new StreamTarget(
+      new WritableStream({
+        write: (chunk) => writable.write({ type: "write", position: chunk.position, data: chunk.data }),
+        close,
+        abort: async () => {
+          if (closed) return;
+          closed = true;
+          await writable.abort();
+        },
+      }),
+      { chunked: true, chunkSize: 2 * 1024 * 1024 },
+    );
+    return {
+      target,
+      finish: () => handle.getFile(),
+      release: async () => {
+        try {
+          await root.removeEntry(name);
+        } catch {
+          /* already gone */
+        }
+      },
+    };
+  } catch (error) {
+    if (!allowMemory) throw new Error("This file is too large to mix in the browser.");
+    if (error instanceof Error && error.message === "This file is too large to mix in the browser.") throw error;
+    const target = new BufferTarget();
+    return {
+      target,
+      finish: async () => {
+        const buffer = target.buffer;
+        if (!buffer) throw new Error("The picture came out empty.");
+        return new Blob([buffer], { type: "video/mp4" });
+      },
+      release: async () => {},
+    };
+  }
+}
+
+async function burnPicture(file: Blob, cues: Cue[], onStatus: (label: string) => void): Promise<PictureOut & { blob: Blob }> {
+  if (file.size > BROWSER_MIX_BYTES) throw new Error("This file is too large to mix in the browser.");
   await ensureFont();
-  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  const input = new Input({
+    source: new BlobSource(file, { maxCacheSize: 8 * 1024 * 1024 }),
+    formats: ALL_FORMATS,
+  });
+  const picture = await openPictureOut(file.size <= 80 * 1024 * 1024);
   try {
     const track = await input.getPrimaryVideoTrack();
     if (!track) throw new Error("That file has no picture.");
@@ -138,8 +203,7 @@ async function burnPicture(file: Blob, cues: Cue[], onStatus: (label: string) =>
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Could not draw the picture.");
-    const target = new BufferTarget();
-    const output = new Output({ format: new Mp4OutputFormat(), target });
+    const output = new Output({ format: new Mp4OutputFormat(), target: picture.target });
     const frames = new VideoSampleSource({
       codec: "avc",
       quality: new Quality({ quantizer: 22, bitrate: Math.max(800_000, Math.round(width * height * 5)) }),
@@ -148,7 +212,7 @@ async function burnPicture(file: Blob, cues: Cue[], onStatus: (label: string) =>
     await output.start();
     const sink = new VideoSampleSink(track);
     let shown = -1;
-    onStatus(`Burning Farsi 0%`);
+    onStatus("Burning Farsi 0%");
     for await (const sample of sink.samples()) {
       sample.draw(ctx, 0, 0, width, height);
       const cue = cues.find((item) => sample.timestamp >= item.start && sample.timestamp < item.end);
@@ -170,9 +234,12 @@ async function burnPicture(file: Blob, cues: Cue[], onStatus: (label: string) =>
     }
     frames.close();
     await output.finalize();
-    const buffer = target.buffer;
-    if (!buffer) throw new Error("The picture came out empty.");
-    return new Blob([buffer], { type: "video/mp4" });
+    const blob = await picture.finish();
+    if (blob.size > BROWSER_MIX_BYTES) throw new Error("This file is too large to mix in the browser.");
+    return { ...picture, blob };
+  } catch (error) {
+    await picture.release();
+    throw error;
   } finally {
     input.dispose();
   }
@@ -252,11 +319,16 @@ export async function renderTranslatedMp4(options: {
   soft: boolean;
   onStatus: (label: string) => void;
 }): Promise<Blob> {
+  if (options.video.size > BROWSER_MIX_BYTES) throw new Error("This file is too large to mix in the browser.");
   if (options.soft) {
     options.onStatus("Loading the encoder");
     return muxAudio(options.video, options.wav, options.srt, options.onStatus);
   }
   const picture = await burnPicture(options.video, parseAss(options.ass), options.onStatus);
-  options.onStatus("Loading the encoder");
-  return muxAudio(picture, options.wav, null, options.onStatus);
+  try {
+    options.onStatus("Loading the encoder");
+    return await muxAudio(picture.blob, options.wav, null, options.onStatus);
+  } finally {
+    await picture.release();
+  }
 }

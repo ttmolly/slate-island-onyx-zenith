@@ -1,3 +1,4 @@
+import { BROWSER_MIX_BYTES } from "@/lib/dub/safe-zone";
 import {
   ALL_FORMATS,
   AudioBufferSource,
@@ -47,6 +48,7 @@ async function build(file: Blob, audio: AudioBuffer, transcode: boolean): Promis
 }
 
 export async function muxDubbedVideo(file: Blob, audio: AudioBuffer): Promise<Blob> {
+  if (file.size > BROWSER_MIX_BYTES) throw new Error("This file is too large to mix in the browser.");
   try {
     return await build(file, audio, false);
   } catch {
