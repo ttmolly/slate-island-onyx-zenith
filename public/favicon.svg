@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Nava">
+  <rect width="32" height="32" rx="7" fill="#0c0d0f"/>
+  <rect x="5.5" y="13.5" width="3.2" height="5" rx="1.1" fill="#8b8e97"/>
+  <rect x="10.4" y="10" width="3.2" height="12" rx="1.1" fill="#c5cad3"/>
+  <rect x="15.3" y="6.5" width="3.2" height="19" rx="1.1" fill="#ececee"/>
+  <rect x="20.2" y="10.5" width="3.2" height="11" rx="1.1" fill="#c5cad3"/>
+  <rect x="25.1" y="13.5" width="3.2" height="5" rx="1.1" fill="#8b8e97"/>
+</svg>

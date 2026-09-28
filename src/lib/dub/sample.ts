@@ -1,0 +1,162 @@
+import type { Project, Segment, Speaker } from "@/lib/dub/types";
+import { assignClips, buildClips } from "@/lib/dub/voice-plan";
+
+const speakers: Speaker[] = [
+  {
+    id: "mira",
+    name: "Mira",
+    voiceId: "ara",
+    note: "Tired courier. Dry, protective, plain-spoken. Not soft, not loud.",
+  },
+  {
+    id: "soren",
+    name: "Soren",
+    voiceId: "rex",
+    note: "Younger, proud, easy to ignite. Rough colloquial when he is angry.",
+  },
+];
+
+const lines: Array<Pick<Segment, "id" | "speakerId" | "start" | "end" | "english" | "energy" | "pitchHz" | "delivery" | "nonverbal">> = [
+  {
+    id: "s1",
+    speakerId: "mira",
+    start: 0.4,
+    end: 2.5,
+    english: "Soren. Put the crate down.",
+    energy: 0.32,
+    pitchHz: 208,
+    delivery: "calm",
+    nonverbal: false,
+  },
+  {
+    id: "s2",
+    speakerId: "soren",
+    start: 2.8,
+    end: 5.5,
+    english: "He called me a stray. I'm not walking away from that.",
+    energy: 0.66,
+    pitchHz: 168,
+    delivery: "excited",
+    nonverbal: false,
+  },
+  {
+    id: "s3",
+    speakerId: "mira",
+    start: 5.7,
+    end: 8.7,
+    english: "You are walking away. The watch is two streets over.",
+    energy: 0.36,
+    pitchHz: 204,
+    delivery: "calm",
+    nonverbal: false,
+  },
+  {
+    id: "s4",
+    speakerId: "soren",
+    start: 8.95,
+    end: 10.0,
+    english: "[laughs]",
+    energy: 0.5,
+    pitchHz: 180,
+    delivery: "excited",
+    nonverbal: true,
+  },
+  {
+    id: "s5",
+    speakerId: "soren",
+    start: 10.3,
+    end: 13.1,
+    english: "Let them come. I'm done being quiet.",
+    energy: 0.9,
+    pitchHz: 196,
+    delivery: "shout",
+    nonverbal: false,
+  },
+  {
+    id: "s6",
+    speakerId: "mira",
+    start: 13.4,
+    end: 17.3,
+    english: "Quiet kept you alive last winter. Don't throw that away for a crate of pears.",
+    energy: 0.6,
+    pitchHz: 246,
+    delivery: "excited",
+    nonverbal: false,
+  },
+  {
+    id: "s7",
+    speakerId: "soren",
+    start: 17.6,
+    end: 20.2,
+    english: "You always do this. You make it small.",
+    energy: 0.34,
+    pitchHz: 142,
+    delivery: "calm",
+    nonverbal: false,
+  },
+  {
+    id: "s8",
+    speakerId: "mira",
+    start: 20.5,
+    end: 24.6,
+    english: "I make it survivable. Come on. Lantern alley, before the lamps go out.",
+    energy: 0.33,
+    pitchHz: 210,
+    delivery: "calm",
+    nonverbal: false,
+  },
+  {
+    id: "s9",
+    speakerId: "soren",
+    start: 24.9,
+    end: 27.5,
+    english: "If he follows us, I won't apologize.",
+    energy: 0.62,
+    pitchHz: 172,
+    delivery: "excited",
+    nonverbal: false,
+  },
+  {
+    id: "s10",
+    speakerId: "mira",
+    start: 27.8,
+    end: 30.4,
+    english: "Then don't speak. Just move.",
+    energy: 0.3,
+    pitchHz: 198,
+    delivery: "calm",
+    nonverbal: false,
+  },
+];
+
+export function createLanternAlley(): Project {
+  const nameOf = (id: string) => speakers.find((speaker) => speaker.id === id)?.name ?? id;
+  const segments: Segment[] = lines.map((line) => ({
+    ...line,
+    farsi: "",
+    skip: line.nonverbal,
+    refClipId: null,
+    refLocked: false,
+    timing: null,
+    spokenSec: null,
+  }));
+  const clips = buildClips(segments, nameOf);
+  return {
+    id: "lantern-alley",
+    title: "Lantern Alley",
+    scene:
+      "Night rain in a market alley. Mira, a tired courier, has found Soren after he shoved a stall keeper who called him a stray. The city watch is two streets away. They need to leave down Lantern Alley before the lamps go out. Mira stays plain and firm. Soren is proud and gets loud.",
+    speakers,
+    glossary: [
+      { id: "g-soren", source: "Soren", fa: "سورن" },
+      { id: "g-mira", source: "Mira", fa: "میرا" },
+      { id: "g-alley", source: "Lantern alley", fa: "کوچه فانوس" },
+      { id: "g-alley2", source: "Lantern Alley", fa: "کوچه فانوس" },
+    ],
+    segments: assignClips(segments, clips),
+    clips,
+    skipRanges: [],
+    mediaName: null,
+    duration: 31,
+  };
+}

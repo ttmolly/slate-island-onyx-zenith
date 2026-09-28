@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Nava",
+      "hasCanvas": false,
+      "bodyTextLen": 1029,
+      "bodyTextHash": "079040af38e3b6327ff017f0dcc36e08b395d70265a31f1b8aa94189b1e6b081",
+      "bodyTextPrefix": "Nava نوا English scenes, spoken Farsi. Write the line, hear it, ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Nava",
+      "hasCanvas": false,
+      "bodyTextLen": 1029,
+      "bodyTextHash": "079040af38e3b6327ff017f0dcc36e08b395d70265a31f1b8aa94189b1e6b081",
+      "bodyTextPrefix": "Nava نوا English scenes, spoken Farsi. Write the line, hear it, ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
